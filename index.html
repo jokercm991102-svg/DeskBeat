@@ -1,0 +1,2271 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>DeskBeat: 60秒辦公室人體工學舒壓節奏遊戲 (自適應雙端版)</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            matcha: {
+              DEFAULT: '#6AB04C',
+              light: '#88D16B',
+              dark: '#4D8435',
+              soft: '#E8F5E5'
+            },
+            sand: {
+              DEFAULT: '#F5F6FA',
+              warm: '#EFECE6',
+              card: '#FDFCF7',
+              dark: '#DCDDE1'
+            },
+            amber: {
+              pastel: '#FFA502',
+              glow: '#FFB834',
+              soft: '#FFF2D9'
+            },
+            slate: {
+              cozy: '#2F3542',
+              muted: '#747D8C',
+              light: '#A4B0BE',
+              dark: '#1E232A'
+            },
+            sakura: {
+              DEFAULT: '#FF6B81',
+              soft: '#FFE2E6',
+              glow: '#FF889B'
+            },
+            lake: {
+              DEFAULT: '#70A1FF',
+              soft: '#E4EDFF'
+            }
+          },
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"PingFang TC"', '"PingFang SC"', '"Microsoft JhengHei"', '"Microsoft YaHei"', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- React 18 & Babel Standalone -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+
+  <!-- Google 官方 MediaPipe 模組 (包含官方 Camera 驅動器) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <!-- Canvas Confetti -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+  <style>
+    :root {
+      --sat: env(safe-area-inset-top, 0px);
+      --sar: env(safe-area-inset-right, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --sal: env(safe-area-inset-left, 0px);
+    }
+
+    html, body {
+      background-color: #14181F;
+      color: #F5F6FA;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "PingFang SC", "Microsoft JhengHei", "Microsoft YaHei", sans-serif;
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      max-height: 100svh;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+
+    .lofi-bg {
+      background: radial-gradient(circle at 50% 50%, #252B36 0%, #14181F 100%);
+    }
+
+    @keyframes judgmentPop {
+      0% { transform: translate(-50%, 0) scale(0.6); opacity: 0; }
+      25% { transform: translate(-50%, -8px) scale(1.18); opacity: 1; }
+      80% { transform: translate(-50%, -18px) scale(1); opacity: 0.95; }
+      100% { transform: translate(-50%, -28px) scale(0.85); opacity: 0; }
+    }
+    .animate-judgment {
+      animation: judgmentPop 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes pulseRing {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.05); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .animate-pulse-ring {
+      animation: pulseRing 1.5s ease-in-out infinite;
+    }
+
+    /* 安全邊界避讓 iPhone 動態島與瀏海 */
+    .safe-pad-x {
+      padding-left: max(12px, var(--sal));
+      padding-right: max(12px, var(--sar));
+    }
+    .safe-pad-t {
+      padding-top: max(8px, var(--sat));
+    }
+    .safe-pad-b {
+      padding-bottom: max(8px, var(--sab));
+    }
+  </style>
+</head>
+<body class="lofi-bg w-full h-full flex items-center justify-center p-0 m-0 overflow-hidden">
+  <div id="root" class="w-full h-full flex items-center justify-center p-0 m-0 overflow-hidden"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+    // ==========================================
+    // 0. 安全相容 Polyfill
+    // ==========================================
+    if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+      CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, radii) {
+        if (!radii) radii = 0;
+        let r0 = 0, r1 = 0, r2 = 0, r3 = 0;
+        if (typeof radii === 'number') {
+          r0 = r1 = r2 = r3 = radii;
+        } else if (Array.isArray(radii)) {
+          r0 = radii[0] || 0;
+          r1 = radii[1] || r0;
+          r2 = radii[2] || r0;
+          r3 = radii[3] || r1;
+        }
+        this.beginPath();
+        this.moveTo(x + r0, y);
+        this.lineTo(x + w - r1, y);
+        this.quadraticCurveTo(x + w, y, x + w, y + r1);
+        this.lineTo(x + w, y + h - r2);
+        this.quadraticCurveTo(x + w, y + h, x + w - r2, y + h);
+        this.lineTo(x + r3, y + h);
+        this.quadraticCurveTo(x, y + h, x, y + h - r3);
+        this.lineTo(x, y + r0);
+        this.quadraticCurveTo(x, y, x + r0, y);
+        this.closePath();
+        return this;
+      };
+    }
+
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+      }
+      static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+      }
+      componentDidCatch(error, errorInfo) {
+        console.warn("DeskBeat ErrorBoundary caught:", error, errorInfo);
+      }
+      resetError = () => {
+        this.setState({ hasError: false, error: null });
+      };
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center text-slate-cozy">
+              <div className="bg-sand-card p-6 rounded-3xl border-2 border-amber-pastel/50 max-w-sm shadow-2xl">
+                <div className="w-10 h-10 rounded-full bg-amber-soft text-amber-pastel flex items-center justify-center mx-auto mb-2 font-bold text-lg">!</div>
+                <h3 className="text-lg font-black mb-1">畫面保護重設</h3>
+                <p className="text-xs text-slate-muted mb-3">系統已自動防護，點擊按鈕即可繼續！</p>
+                <button onClick={this.resetError} className="px-5 py-2 rounded-xl bg-matcha text-white font-bold text-xs shadow">繼續體驗</button>
+              </div>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    // ==========================================
+    // 1. 純向量 SVG 圖示元件
+    // ==========================================
+    const Icon = ({ name, className = "w-3.5 h-3.5", ...props }) => {
+      switch (name) {
+        case 'camera':
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+              <circle cx="12" cy="13" r="3"/>
+            </svg>
+          );
+        case 'play':
+          return <svg className={className} viewBox="0 0 24 24" fill="currentColor" {...props}><polygon points="5 3 19 12 5 21 5 3"/></svg>;
+        case 'pause':
+          return <svg className={className} viewBox="0 0 24 24" fill="currentColor" {...props}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>;
+        case 'volume-2':
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            </svg>
+          );
+        case 'volume-x':
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/>
+            </svg>
+          );
+                case 'globe':
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          );
+        case 'repeat':
+
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>
+            </svg>
+          );
+        case 'check':
+          return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" {...props}><polyline points="20 6 9 17 4 12"/></svg>;
+        case 'mic':
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+          );
+        case 'flame':
+          return <svg className={className} viewBox="0 0 24 24" fill="currentColor" {...props}><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>;
+        case 'target':
+          return (
+            <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+              <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
+            </svg>
+          );
+        default:
+          return <span>●</span>;
+      }
+    };
+
+    const speakCoachPrompt = (text) => {
+      try {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(text);
+          utter.lang = 'zh-TW';
+          utter.rate = 1.05;
+          utter.pitch = 1.0;
+          window.speechSynthesis.speak(utter);
+        }
+      } catch (e) {}
+    };
+
+    // ==========================================
+    // 2. LO-FI 爵士程序化音樂引擎 (60 / 75 / 88 BPM)
+    // ==========================================
+    class LoFiAudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.masterGain = null;
+        this.isMuted = false;
+        this.bpm = 75;
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.currentStep = 0;
+        this.timerId = null;
+        this.volume = 0.65;
+        this.noiseNode = null;
+      }
+
+      init() {
+        try {
+          if (!this.ctx) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            this.ctx = new AudioContext();
+
+            this.masterGain = this.ctx.createGain();
+            this.masterGain.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+
+            this.masterFilter = this.ctx.createBiquadFilter();
+            this.masterFilter.type = 'lowpass';
+            this.masterFilter.frequency.setValueAtTime(3600, this.ctx.currentTime);
+
+            this.compressor = this.ctx.createDynamicsCompressor();
+            this.compressor.threshold.setValueAtTime(-18, this.ctx.currentTime);
+
+            this.masterGain.connect(this.masterFilter);
+            this.masterFilter.connect(this.compressor);
+            this.compressor.connect(this.ctx.destination);
+
+            this.startVinylNoise();
+          }
+          if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(() => {});
+          }
+        } catch (e) {}
+      }
+
+      setBpm(newBpm) {
+        this.bpm = newBpm;
+        if (this.isPlaying && !this.isPaused) {
+          this.scheduleBeatLoop();
+        }
+      }
+
+      toggleMute() {
+        this.isMuted = !this.isMuted;
+        if (this.masterGain && this.ctx) {
+          this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : this.volume, this.ctx.currentTime);
+        }
+        return this.isMuted;
+      }
+
+      startVinylNoise() {
+        if (!this.ctx || this.noiseNode) return;
+        try {
+          const bufferSize = this.ctx.sampleRate * 2;
+          const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+
+          let b0 = 0, b1 = 0, b2 = 0;
+          for (let i = 0; i < bufferSize; i++) {
+            const white = Math.random() * 2 - 1;
+            b0 = 0.99886 * b0 + white * 0.0555;
+            b1 = 0.99332 * b1 + white * 0.0750;
+            b2 = 0.96900 * b2 + white * 0.1538;
+            let pink = b0 + b1 + b2 + white * 0.536;
+            if (Math.random() < 0.001) pink += (Math.random() * 2 - 1) * 3.0;
+            data[i] = pink * 0.007;
+          }
+
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = buffer;
+          noise.loop = true;
+
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(1400, this.ctx.currentTime);
+
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.22, this.ctx.currentTime);
+
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.masterGain);
+
+          noise.start();
+          this.noiseNode = noise;
+        } catch (e) {}
+      }
+
+      playKick(time) {
+        if (!this.ctx) return;
+        try {
+          const t = time || this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.frequency.setValueAtTime(110, t);
+          osc.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+          gain.gain.setValueAtTime(0.75, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+          osc.connect(gain);
+          gain.connect(this.masterGain);
+          osc.start(t);
+          osc.stop(t + 0.3);
+        } catch (e) {}
+      }
+
+      playSnare(time) {
+        if (!this.ctx) return;
+        try {
+          const t = time || this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const oscGain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(180, t);
+          osc.frequency.exponentialRampToValueAtTime(90, t + 0.08);
+          oscGain.gain.setValueAtTime(0.4, t);
+          oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+          osc.connect(oscGain);
+          oscGain.connect(this.masterGain);
+
+          const bufferSize = this.ctx.sampleRate * 0.12;
+          const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = buffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(2200, t);
+
+          const noiseGain = this.ctx.createGain();
+          noiseGain.gain.setValueAtTime(0.3, t);
+          noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+
+          noise.connect(filter);
+          filter.connect(noiseGain);
+          noiseGain.connect(this.masterGain);
+
+          osc.start(t);
+          osc.stop(t + 0.16);
+          noise.start(t);
+          noise.stop(t + 0.16);
+        } catch (e) {}
+      }
+
+      playHiHat(time, accent = false) {
+        if (!this.ctx) return;
+        try {
+          const t = time || this.ctx.currentTime;
+          const bufferSize = this.ctx.sampleRate * 0.05;
+          const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = buffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'highpass';
+          filter.frequency.setValueAtTime(7500, t);
+
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(accent ? 0.25 : 0.12, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+
+          noise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.masterGain);
+
+          noise.start(t);
+          noise.stop(t + 0.05);
+        } catch (e) {}
+      }
+
+      playChord(notes, time, duration = 2.4) {
+        if (!this.ctx) return;
+        try {
+          const t = time || this.ctx.currentTime;
+          notes.forEach((freq, idx) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, t + idx * 0.025);
+
+            const noteGain = 0.16 / notes.length;
+            gain.gain.setValueAtTime(0.001, t + idx * 0.025);
+            gain.linearRampToValueAtTime(noteGain, t + idx * 0.025 + 0.04);
+            gain.exponentialRampToValueAtTime(0.0001, t + idx * 0.025 + duration);
+
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+
+            osc.start(t + idx * 0.025);
+            osc.stop(t + idx * 0.025 + duration);
+          });
+        } catch (e) {}
+      }
+
+      playHitChime(rating = 'PERFECT') {
+        if (!this.ctx || this.isMuted) return;
+        try {
+          const t = this.ctx.currentTime;
+          let freq1 = 880;
+          if (rating === 'SUPER') freq1 = 1318.51;
+          else if (rating === 'PERFECT') freq1 = 1046.50;
+          else if (rating === 'GREAT') freq1 = 880;
+
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq1, t);
+          gain.gain.setValueAtTime(0.2, t);
+          gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+
+          osc.connect(gain);
+          gain.connect(this.masterGain);
+          osc.start(t);
+          osc.stop(t + 0.5);
+        } catch (e) {}
+      }
+
+      playVictoryFanfare() {
+        if (!this.ctx) return;
+        try {
+          const notes = [587.33, 739.99, 880.00, 1174.66];
+          notes.forEach((freq, idx) => {
+            setTimeout(() => {
+              if (this.ctx) {
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+                gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.8);
+                osc.connect(gain);
+                gain.connect(this.masterGain);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.8);
+              }
+            }, idx * 160);
+          });
+        } catch (e) {}
+      }
+
+      startSession(bpm = 75) {
+        this.init();
+        this.bpm = bpm;
+        this.isPlaying = true;
+        this.isPaused = false;
+        this.currentStep = 0;
+        this.scheduleBeatLoop();
+      }
+
+      scheduleBeatLoop() {
+        if (this.timerId) clearInterval(this.timerId);
+        const beatDuration = 60 / this.bpm;
+        const stepTime = (beatDuration / 2) * 1000;
+
+        const chords = [
+          [146.83, 293.66, 369.99, 440.00, 554.37], // Dmaj9
+          [123.47, 246.94, 369.99, 440.00, 587.33], // Bm7
+          [164.81, 329.63, 392.00, 493.88, 587.33], // Em9
+          [110.00, 220.00, 392.00, 493.88, 587.33]  // A7sus4
+        ];
+
+        this.timerId = setInterval(() => {
+          if (!this.isPlaying || this.isPaused) return;
+          const step = this.currentStep % 32;
+          const barIdx = Math.floor(step / 8);
+          const isEighth = (step % 2) === 1;
+
+          this.playHiHat(this.ctx.currentTime, !isEighth);
+
+          if (step % 8 === 0 || step % 8 === 5) {
+            this.playKick(this.ctx.currentTime);
+          }
+          if (step % 8 === 2 || step % 8 === 6) {
+            this.playSnare(this.ctx.currentTime);
+          }
+          if (step % 8 === 0) {
+            this.playChord(chords[barIdx], this.ctx.currentTime, 3.0);
+          }
+
+          this.currentStep++;
+        }, stepTime);
+      }
+
+      pauseSession() {
+        this.isPaused = true;
+        if (this.timerId) { clearInterval(this.timerId); this.timerId = null; }
+      }
+
+      resumeSession() {
+        if (!this.isPlaying) return;
+        this.isPaused = false;
+        this.scheduleBeatLoop();
+      }
+
+      stopSession() {
+        this.isPlaying = false;
+        this.isPaused = false;
+        if (this.timerId) { clearInterval(this.timerId); this.timerId = null; }
+      }
+    }
+
+    const audioSynth = new LoFiAudioEngine();
+
+    // ==========================================
+    // 2.5 多國語言字典 (繁體中文 / English) & 使用者語言跟蹤
+    // ==========================================
+    const I18N = {
+      zh: {
+        title: 'DeskBeat: 60秒辦公室工學節奏遊戲',
+        subtitle: '動動肩頸、放鬆眼周・上班摸魚也能做工學復健',
+        easy: '低速舒壓',
+        medium: '中速推薦',
+        hard: '高速挑戰⚡',
+        startBtn: '開始 60 秒工學放鬆',
+        calib3s: '3秒校準',
+        drill7: '7動檢測',
+        swapLR: '⇄ 對調',
+        swappedLR: '已反轉',
+        endGame: '結束',
+        pause: '暫停',
+        resume: '繼續',
+        eyes: '眼',
+        neck: '頸',
+        shoulder: '肩',
+        center: '正',
+        lookLeft: '←看左',
+        lookRight: '→看右',
+        closeEyes: '閉眼',
+        tiltLeft: '左傾',
+        tiltRight: '右傾',
+        shrug: '▲抬肩',
+        normal: '端正',
+        victoryTag: '健康認證',
+        victoryTitle: '60 秒工學舒壓圓滿完成！',
+        victorySub: '肩頸關節與眼周肌肉已獲得深層活氧放鬆。',
+        overallRank: '綜合評級',
+        finalScore: '最終得分',
+        maxCombo: '最高連擊',
+        accuracy: '工學命中率',
+        shareBtn: '🚀 一鍵分享成果',
+        saveCardBtn: '📸 儲存成績卡片',
+        retryBtn: '再做一次',
+        homeBtn: '返回首頁',
+        copiedToast: '✅ 已複製成績文案與專屬連結！快貼給朋友挑戰吧！',
+        calibModalTitle: '3 秒坐姿端正校準',
+        calibModalDesc: '請端坐並目視前方螢幕，系統正在鎖定您的放鬆基準線...',
+        calibSuccess: '校準成功！即將進入節奏舞台',
+        drillModalTitle: 'AI 7動人體工學靈活度檢測',
+        pass: '通過',
+        fail: '需伸展',
+        shareRankMaster: '工學大師',
+        shareRankFlex: '靈活舒暢',
+        shareRankGood: '放鬆達標',
+        shareRankPractice: '持續練習',
+        statEyes: '眼周活氧',
+        statNeck: '頸椎伸展',
+        statShoulders: '肩胛放鬆'
+      },
+      en: {
+        title: 'DeskBeat: 60s Office Ergonomic Rhythm Game',
+        subtitle: 'Relax your neck, shoulders & eyes・Relieve strain right at your desk',
+        easy: 'Easy Flow',
+        medium: 'Medium Flow',
+        hard: 'Hard Beats⚡',
+        startBtn: 'Start 60s Break',
+        calib3s: '3s Calibrate',
+        drill7: '7-Motion Test',
+        swapLR: '⇄ Swap L/R',
+        swappedLR: 'Inverted',
+        endGame: 'Exit',
+        pause: 'Pause',
+        resume: 'Resume',
+        eyes: 'Eyes',
+        neck: 'Neck',
+        shoulder: 'Shoulder',
+        center: 'Center',
+        lookLeft: '←Left',
+        lookRight: '→Right',
+        closeEyes: 'Closed',
+        tiltLeft: 'Tilt L',
+        tiltRight: 'Tilt R',
+        shrug: '▲Shrug',
+        normal: 'Upright',
+        victoryTag: 'Wellness Verified',
+        victoryTitle: '60s Ergonomic Break Complete!',
+        victorySub: 'Neck joints, shoulders & eye muscles are deeply relaxed.',
+        overallRank: 'Overall Rank',
+        finalScore: 'Final Score',
+        maxCombo: 'Max Combo',
+        accuracy: 'Accuracy',
+        shareBtn: '🚀 Share Result',
+        saveCardBtn: '📸 Save Score Card',
+        retryBtn: 'Play Again',
+        homeBtn: 'Home',
+        copiedToast: '✅ Copied score & link! Share with your friends!',
+        calibModalTitle: '3-Second Posture Calibration',
+        calibModalDesc: 'Sit upright and look straight at the screen. Locking baseline...',
+        calibSuccess: 'Calibrated! Entering rhythm session',
+        drillModalTitle: 'AI 7-Motion Ergonomic Assessment',
+        pass: 'Pass',
+        fail: 'Stretch',
+        shareRankMaster: 'Ergonomic Master',
+        shareRankFlex: 'Excellent Flexibility',
+        shareRankGood: 'Good Stretch',
+        shareRankPractice: 'Keep Practicing',
+        statEyes: 'Eyes Relaxed',
+        statNeck: 'Neck Stretches',
+        statShoulders: 'Shoulder Shrugs'
+      }
+    };
+
+    const NOTE_LABELS_EN = {
+      '向左看': 'Look Left',
+      '向右看': 'Look Right',
+      '眼看左': 'Look Left',
+      '眼看右': 'Look Right',
+      '眼看左側': 'Look Left',
+      '眼看右側': 'Look Right',
+      '閉眼深呼吸': 'Close Eyes',
+      '閉眼收操深呼吸': 'Breathe & Relax',
+      '閉眼': 'Close Eyes',
+      '閉眼蓄力': 'Close & Hold',
+      '收操閉眼靜心': 'Breathe Out',
+      '頭向左傾斜': 'Tilt Left',
+      '頭向右傾斜': 'Tilt Right',
+      '頭向左傾': 'Tilt Left',
+      '頭向右傾': 'Tilt Right',
+      '頭左傾': 'Tilt Left',
+      '頭右傾': 'Tilt Right',
+      '頭部回正': 'Head Center',
+      '自然抬肩': 'Shrug Shoulders',
+      '放鬆沉肩': 'Drop Shoulders',
+      '沉肩呼氣': 'Drop & Exhale',
+      '抬肩蓄力維持': 'Hold Shrug',
+      '重拍釋放': 'Release Shoulders',
+      '深層左側伸': 'Stretch Left',
+      '深層右側伸': 'Stretch Right',
+      '高潮大抬肩！': 'Deep Shrug!',
+      '全身下沉放鬆': 'Full Relax',
+      '輕抬雙肩': 'Shrug',
+      '雙肩微抬': 'Shrug',
+      '大呼氣釋放': 'Deep Exhale',
+      '大呼氣下沉': 'Full Exhale',
+      '最後左拉伸': 'Stretch Left',
+      '最後右拉伸': 'Stretch Right',
+      '最後抬肩': 'Final Shrug',
+      '最後自然抬肩': 'Final Shrug',
+      '徹底沉肩放鬆': 'Total Relaxation',
+      '全身放鬆沉肩': 'Total Relaxation'
+    };
+
+    const getNoteLabel = (label, lang) => {
+      if (lang === 'en') {
+        return NOTE_LABELS_EN[label] || label;
+      }
+      return label;
+    };
+
+    const getInitialLang = () => {
+      try {
+        const saved = localStorage.getItem('deskbeat_lang');
+        if (saved === 'zh' || saved === 'en') return saved;
+        const bLang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+        return bLang.startsWith('zh') ? 'zh' : 'en';
+      } catch (e) {
+        return 'zh';
+      }
+    };
+
+    // ==========================================
+    // 3. 譜面資料庫 (飽滿 60 秒無空窗期)
+    // ==========================================
+    const CHARTS = {
+      easy: [
+        { id: 1, track: 0, time: 2.5, type: 'tap', posture: 'eye-left', label: '向左看', keyHint: '←' },
+        { id: 2, track: 0, time: 5.0, type: 'tap', posture: 'eye-right', label: '向右看', keyHint: '→' },
+        { id: 3, track: 0, time: 7.5, type: 'tap', posture: 'eye-close', label: '閉眼深呼吸', keyHint: '↓' },
+        { id: 4, track: 1, time: 10.5, type: 'tap', posture: 'neck-left', label: '頭向左傾斜', keyHint: '左傾' },
+        { id: 5, track: 1, time: 13.5, type: 'tap', posture: 'neck-center', label: '頭部回正', keyHint: '回正' },
+        { id: 6, track: 1, time: 16.5, type: 'tap', posture: 'neck-right', label: '頭向右傾斜', keyHint: '右傾' },
+        { id: 7, track: 1, time: 19.5, type: 'tap', posture: 'neck-center', label: '頭部回正', keyHint: '回正' },
+        { id: 8, track: 2, time: 23.0, type: 'tap', posture: 'shoulder-shrug', label: '自然抬肩', keyHint: '抬肩' },
+        { id: 9, track: 2, time: 26.0, type: 'tap', posture: 'shoulder-drop', label: '放鬆沉肩', keyHint: '放鬆' },
+        { id: 10, track: 0, time: 29.5, type: 'tap', posture: 'eye-left', label: '向左看', keyHint: '←' },
+        { id: 11, track: 0, time: 32.5, type: 'tap', posture: 'eye-right', label: '向右看', keyHint: '→' },
+        { id: 12, track: 1, time: 36.0, type: 'tap', posture: 'neck-left', label: '頭向左傾斜', keyHint: '左傾' },
+        { id: 13, track: 1, time: 39.0, type: 'tap', posture: 'neck-right', label: '頭向右傾斜', keyHint: '右傾' },
+        { id: 14, track: 2, time: 43.0, type: 'tap', posture: 'shoulder-shrug', label: '自然抬肩', keyHint: '抬肩' },
+        { id: 15, track: 2, time: 46.5, type: 'tap', posture: 'shoulder-drop', label: '放鬆沉肩', keyHint: '放鬆' },
+        { id: 16, track: 0, time: 49.5, type: 'tap', posture: 'eye-left', label: '眼看左側', keyHint: '←' },
+        { id: 17, track: 0, time: 52.0, type: 'tap', posture: 'eye-right', label: '眼看右側', keyHint: '→' },
+        { id: 18, track: 2, time: 55.0, type: 'tap', posture: 'shoulder-shrug', label: '最後抬肩', keyHint: '抬肩' },
+        { id: 19, track: 2, time: 57.2, type: 'tap', posture: 'shoulder-drop', label: '徹底沉肩放鬆', keyHint: '放鬆' },
+        { id: 20, track: 0, time: 58.6, type: 'tap', posture: 'eye-close', label: '閉眼收操深呼吸', keyHint: '↓' }
+      ],
+      medium: [
+        { id: 1, track: 0, time: 2.0, type: 'tap', posture: 'eye-left', label: '向左看', keyHint: '←' },
+        { id: 2, track: 0, time: 3.6, type: 'tap', posture: 'eye-right', label: '向右看', keyHint: '→' },
+        { id: 3, track: 0, time: 5.2, type: 'tap', posture: 'eye-left', label: '向左看', keyHint: '←' },
+        { id: 4, track: 0, time: 7.0, duration: 2.4, type: 'hold', posture: 'eye-close', label: '閉眼深呼吸', keyHint: '長按' },
+        { id: 5, track: 1, time: 11.5, duration: 3.6, type: 'hold', posture: 'neck-left', label: '頭向左傾斜', keyHint: '長按' },
+        { id: 6, track: 1, time: 16.5, type: 'tap', posture: 'neck-center', label: '頭部回正', keyHint: '回正' },
+        { id: 7, track: 1, time: 18.5, duration: 3.6, type: 'hold', posture: 'neck-right', label: '頭向右傾斜', keyHint: '長按' },
+        { id: 8, track: 1, time: 23.5, type: 'tap', posture: 'neck-center', label: '頭部回正', keyHint: '回正' },
+        { id: 9, track: 2, time: 26.5, type: 'tap', posture: 'shoulder-shrug', label: '自然抬肩', keyHint: '抬肩' },
+        { id: 10, track: 2, time: 28.5, type: 'tap', posture: 'shoulder-drop', label: '沉肩呼氣', keyHint: '放鬆' },
+        { id: 11, track: 2, time: 30.5, duration: 3.6, type: 'hold', posture: 'shoulder-shrug', label: '抬肩蓄力維持', keyHint: '長按' },
+        { id: 12, track: 2, time: 35.5, type: 'tap', posture: 'shoulder-drop', label: '重拍釋放', keyHint: '放鬆' },
+        { id: 13, track: 0, time: 38.0, type: 'tap', posture: 'eye-left', label: '向左看', keyHint: '←' },
+        { id: 14, track: 1, time: 40.5, duration: 4.0, type: 'hold', posture: 'neck-left', label: '深層左側伸', keyHint: '長按' },
+        { id: 15, track: 0, time: 46.0, type: 'tap', posture: 'eye-right', label: '向右看', keyHint: '→' },
+        { id: 16, track: 1, time: 48.0, duration: 3.5, type: 'hold', posture: 'neck-right', label: '深層右側伸', keyHint: '長按' },
+        { id: 17, track: 2, time: 53.0, type: 'tap', posture: 'shoulder-shrug', label: '高潮大抬肩！', keyHint: '抬肩' },
+        { id: 18, track: 2, time: 56.5, type: 'tap', posture: 'shoulder-drop', label: '全身下沉放鬆', keyHint: '放鬆' },
+        { id: 19, track: 0, time: 58.5, type: 'tap', posture: 'eye-close', label: '收操閉眼靜心', keyHint: '↓' }
+      ],
+      hard: [
+        { id: 1, track: 0, time: 2.0, type: 'tap', posture: 'eye-left', label: '向左看', keyHint: '←' },
+        { id: 2, track: 1, time: 3.5, type: 'tap', posture: 'neck-left', label: '頭向左傾', keyHint: '左傾' },
+        { id: 3, track: 0, time: 6.0, type: 'tap', posture: 'eye-left', label: '眼看左', keyHint: '←', compoundGroup: 'c1' },
+        { id: 4, track: 1, time: 6.0, type: 'tap', posture: 'neck-right', label: '頭向右傾', keyHint: '右傾', compoundGroup: 'c1' },
+        { id: 5, track: 0, time: 9.0, type: 'tap', posture: 'eye-right', label: '眼看右', keyHint: '→', compoundGroup: 'c2' },
+        { id: 6, track: 1, time: 9.0, type: 'tap', posture: 'neck-left', label: '頭向左傾', keyHint: '左傾', compoundGroup: 'c2' },
+        { id: 7, track: 0, time: 13.0, type: 'tap', posture: 'eye-close', label: '閉眼', keyHint: '↓', compoundGroup: 'c3' },
+        { id: 8, track: 2, time: 13.0, type: 'tap', posture: 'shoulder-shrug', label: '輕抬雙肩', keyHint: '抬肩', compoundGroup: 'c3' },
+        { id: 9, track: 2, time: 16.0, type: 'tap', posture: 'shoulder-drop', label: '沉肩釋放', keyHint: '放鬆' },
+        { id: 10, track: 1, time: 19.0, type: 'tap', posture: 'neck-left', label: '頭左傾', keyHint: '左傾', compoundGroup: 'c4' },
+        { id: 11, track: 2, time: 19.0, type: 'tap', posture: 'shoulder-shrug', label: '輕抬雙肩', keyHint: '抬肩', compoundGroup: 'c4' },
+        { id: 12, track: 0, time: 23.0, type: 'tap', posture: 'eye-left', label: '眼看左', keyHint: '←', compoundGroup: 'c5' },
+        { id: 13, track: 1, time: 23.0, type: 'tap', posture: 'neck-right', label: '頭右傾', keyHint: '右傾', compoundGroup: 'c5' },
+        { id: 14, track: 2, time: 23.0, type: 'tap', posture: 'shoulder-shrug', label: '自然抬肩', keyHint: '抬肩', compoundGroup: 'c5' },
+        { id: 15, track: 2, time: 27.0, type: 'tap', posture: 'shoulder-drop', label: '大呼氣釋放', keyHint: '放鬆' },
+        { id: 16, track: 0, time: 30.5, type: 'tap', posture: 'eye-right', label: '眼看右', keyHint: '→', compoundGroup: 'c6' },
+        { id: 17, track: 1, time: 30.5, type: 'tap', posture: 'neck-left', label: '頭左傾', keyHint: 'A', compoundGroup: 'c6' },
+        { id: 18, track: 0, time: 34.5, type: 'tap', posture: 'eye-left', label: '眼看左', keyHint: '←', compoundGroup: 'c7' },
+        { id: 19, track: 2, time: 34.5, type: 'tap', posture: 'shoulder-shrug', label: '雙肩微抬', keyHint: '抬肩', compoundGroup: 'c7' },
+        { id: 20, track: 2, time: 38.0, type: 'tap', posture: 'shoulder-drop', label: '重拍釋放', keyHint: '放鬆' },
+        { id: 21, track: 0, time: 41.5, duration: 3.5, type: 'hold', posture: 'eye-close', label: '閉眼蓄力', keyHint: '長按', compoundGroup: 'c8' },
+        { id: 22, track: 2, time: 41.5, duration: 3.5, type: 'hold', posture: 'shoulder-shrug', label: '雙肩微抬', keyHint: '長按', compoundGroup: 'c8' },
+        { id: 23, track: 2, time: 46.5, type: 'tap', posture: 'shoulder-drop', label: '大呼氣下沉', keyHint: '放鬆' },
+        { id: 24, track: 1, time: 49.0, type: 'tap', posture: 'neck-left', label: '最後左拉伸', keyHint: '左傾' },
+        { id: 25, track: 1, time: 52.0, type: 'tap', posture: 'neck-right', label: '最後右拉伸', keyHint: '右傾' },
+        { id: 26, track: 2, time: 55.0, type: 'tap', posture: 'shoulder-shrug', label: '最後自然抬肩', keyHint: '抬肩' },
+        { id: 27, track: 2, time: 57.5, type: 'tap', posture: 'shoulder-drop', label: '全身放鬆沉肩', keyHint: '放鬆' },
+        { id: 28, track: 0, time: 58.6, type: 'tap', posture: 'eye-close', label: '平靜收操深呼吸', keyHint: '↓' }
+      ]
+    };
+
+    // 7大動作：自然提肩門檻 >= 4px，文字語音完全去鍵盤化
+    const SEVEN_DRILL_STEPS = [
+      { id: 0, title: "第一動：雙眼向左看", voicePrompt: "第一動，請雙眼向左看", targetDesc: "轉動雙眼看向左側（或微左轉頭）", checkFn: (p) => p.eyes === 'left' },
+      { id: 1, title: "第二動：雙眼向右看", voicePrompt: "第二動，請雙眼向右看", targetDesc: "轉動雙眼看向右側（或微右轉頭）", checkFn: (p) => p.eyes === 'right' },
+      { id: 2, title: "第三動：閉上雙眼深呼吸", voicePrompt: "第三動，請閉上雙眼深呼吸", targetDesc: "閉眼放鬆角膜 1.5 秒", checkFn: (p) => p.eyes === 'close' },
+      { id: 3, title: "第四動：頭部向左肩傾斜", voicePrompt: "第四動，請將頭向左肩傾斜", targetDesc: "左耳靠近左肩（角度 >18°）", checkFn: (p) => p.neckState === 'left' },
+      { id: 4, title: "第五動：頭部向右肩傾斜", voicePrompt: "第五動，請將頭向右肩傾斜", targetDesc: "右耳靠近右肩（角度 >18°）", checkFn: (p) => p.neckState === 'right' },
+      { id: 5, title: "第六動：自然抬高雙肩", voicePrompt: "第六動，請自然抬高雙肩", targetDesc: "微幅抬高雙肩即可 (>4px)", checkFn: (p) => p.shoulderState === 'shrug' || (p.shoulderElevation && p.shoulderElevation >= 4) },
+      { id: 6, title: "第七動：肩膀完全下沉放鬆", voicePrompt: "第七動，請雙肩徹底下沉吐氣", targetDesc: "雙肩放平釋放所有壓力", checkFn: (p) => p.shoulderState === 'normal' || (p.shoulderElevation && p.shoulderElevation <= 2) }
+    ];
+
+    // ==========================================
+    // 4. REACT 主應用 (安全邊界避讓 ＋ 16:9比例防過度縮放 ＋ 橫向雙欄卡片)
+    // ==========================================
+    function DeskBeatApp() {
+      const [gameState, setGameState] = useState('welcome');
+      const [nextTargetState, setNextTargetState] = useState('playing');
+      const [difficulty, setDifficulty] = useState('medium');
+      const [isPaused, setIsPaused] = useState(false);
+
+      const [invertLR, setInvertLR] = useState(() => {
+        try { return localStorage.getItem('deskbeat_invert_lr') === 'true'; } catch(e) { return false; }
+      });
+      const toggleInvertLR = () => {
+        setInvertLR(prev => {
+          const next = !prev;
+          try { localStorage.setItem('deskbeat_invert_lr', String(next)); } catch(e) {}
+          return next;
+        });
+      };
+      const invertLRRef = useRef(invertLR);
+      useEffect(() => { invertLRRef.current = invertLR; }, [invertLR]);
+
+      const [calibCountdown, setCalibCountdown] = useState(3);
+      const calibSamplesRef = useRef({ angles: [], gazes: [], shoulders: [] });
+
+      const [baseline, setBaseline] = useState({
+        neckAngle: 0,
+        gazeScore: 0,
+        shoulderY: 0.75,
+        isCalibrated: false
+      });
+      const baselineRef = useRef(baseline);
+      useEffect(() => { baselineRef.current = baseline; }, [baseline]);
+
+      const smoothedRef = useRef({
+        neckAngle: 0,
+        gazeScore: 0,
+        shoulderY: 0.75,
+        neckState: 'center',
+        eyes: 'center',
+        shoulderState: 'normal'
+      });
+
+            const [lang, setLang] = useState(getInitialLang);
+      const toggleLang = () => {
+        setLang(l => {
+          const next = l === 'zh' ? 'en' : 'zh';
+          try { localStorage.setItem('deskbeat_lang', next); } catch (e) {}
+          return next;
+        });
+      };
+      const t = I18N[lang] || I18N.zh;
+      const [showToast, setShowToast] = useState(false);
+      const [gameStats, setGameStats] = useState({
+        totalHits: 0,
+        eyeHits: 0,
+        neckHits: 0,
+        shoulderHits: 0,
+        misses: 0,
+        supers: 0,
+        perfects: 0,
+        greats: 0
+      });
+
+      const [score, setScore] = useState(0);
+
+      const [combo, setCombo] = useState(0);
+      const [maxCombo, setMaxCombo] = useState(0);
+      const [sessionTime, setSessionTime] = useState(60);
+      const [judgment, setJudgment] = useState(null);
+      const [isMuted, setIsMuted] = useState(false);
+
+      const [cameraActive, setCameraActive] = useState(false);
+      const [showGuides, setShowGuides] = useState(true);
+
+      const [drillIndex, setDrillIndex] = useState(0);
+      const [drillPassed, setDrillPassed] = useState([false, false, false, false, false, false, false]);
+
+      const [livePosture, setLivePosture] = useState({
+        eyes: 'center',
+        neckTilt: 0,
+        neckState: 'center',
+        shoulderElevation: 0,
+        shoulderState: 'normal',
+        isFaceTracked: false,
+        eyeR: null,
+        eyeL: null,
+        shoulderL: null,
+        shoulderR: null
+      });
+
+      const videoRef = useRef(null);
+      const arCanvasRef = useRef(null);
+      const cameraDriverRef = useRef(null);
+      const faceMeshRef = useRef(null);
+      const poseRef = useRef(null);
+      const gameStartTimeRef = useRef(null);
+      const pausedAtRef = useRef(null);
+      const totalPausedDurationRef = useRef(0);
+      const isPausedRef = useRef(false);
+      const notesRef = useRef([]);
+      const hitEffectsRef = useRef([]);
+      const livePostureRef = useRef(livePosture);
+      const showGuidesRef = useRef(showGuides);
+      const isDrillStepTransitioningRef = useRef(false);
+
+      useEffect(() => { livePostureRef.current = livePosture; }, [livePosture]);
+      useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+      useEffect(() => { showGuidesRef.current = showGuides; }, [showGuides]);
+
+      const startCamera = async () => {
+        try {
+          if (!videoRef.current) return;
+          initMediaPipe();
+
+          if (window.Camera && !cameraDriverRef.current) {
+            const cam = new window.Camera(videoRef.current, {
+              onFrame: async () => {
+                if (videoRef.current && videoRef.current.readyState >= 2) {
+                  if (faceMeshRef.current) {
+                    await faceMeshRef.current.send({ image: videoRef.current }).catch(() => {});
+                  }
+                  if (poseRef.current) {
+                    await poseRef.current.send({ image: videoRef.current }).catch(() => {});
+                  }
+                }
+              },
+              width: 640,
+              height: 480
+            });
+            await cam.start();
+            cameraDriverRef.current = cam;
+            setCameraActive(true);
+          } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+              audio: false
+            });
+            videoRef.current.srcObject = stream;
+            await videoRef.current.play();
+            setCameraActive(true);
+          }
+        } catch (err) {
+          console.warn('相機初始化提示:', err);
+        }
+      };
+
+      useEffect(() => {
+        startCamera();
+        return () => {
+          if (cameraDriverRef.current && cameraDriverRef.current.stop) {
+            cameraDriverRef.current.stop();
+          }
+          audioSynth.stopSession();
+        };
+      }, []);
+
+      const initMediaPipe = () => {
+        try {
+          if (window.FaceMesh && !faceMeshRef.current) {
+            const fm = new window.FaceMesh({
+              locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+            });
+            fm.setOptions({
+              maxNumFaces: 1,
+              refineLandmarks: true,
+              minDetectionConfidence: 0.5,
+              minTrackingConfidence: 0.5
+            });
+            fm.onResults(onFaceMeshResults);
+            faceMeshRef.current = fm;
+          }
+          if (window.Pose && !poseRef.current) {
+            const p = new window.Pose({
+              locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+            });
+            p.setOptions({
+              modelComplexity: 0,
+              smoothLandmarks: true,
+              minDetectionConfidence: 0.5,
+              minTrackingConfidence: 0.5
+            });
+            p.onResults(onPoseResults);
+            poseRef.current = p;
+          }
+        } catch (e) {}
+      };
+
+      const onFaceMeshResults = (results) => {
+        if (!results || !results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+          setLivePosture(p => ({ ...p, isFaceTracked: false }));
+          return;
+        }
+        const lm = results.multiFaceLandmarks[0];
+        const eyeR = lm[33];
+        const eyeL = lm[263];
+
+        if (eyeR && eyeL) {
+          const dx = eyeL.x - eyeR.x;
+          const dy = eyeL.y - eyeR.y;
+          const rawAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+          const sm = smoothedRef.current;
+          sm.neckAngle = sm.neckAngle * 0.70 + rawAngle * 0.30;
+
+          if (gameState === 'calibrating') {
+            calibSamplesRef.current.angles.push(rawAngle);
+          }
+
+          const deltaAngle = sm.neckAngle - (baselineRef.current.neckAngle || 0);
+
+          let newNeckState = sm.neckState;
+          if (sm.neckState === 'center') {
+            if (deltaAngle > 18) newNeckState = 'left';
+            else if (deltaAngle < -18) newNeckState = 'right';
+          } else if (sm.neckState === 'left') {
+            if (deltaAngle < 10) newNeckState = 'center';
+          } else if (sm.neckState === 'right') {
+            if (deltaAngle > -10) newNeckState = 'center';
+          }
+          sm.neckState = newNeckState;
+
+          let finalNeck = sm.neckState;
+          if (invertLRRef.current) {
+            if (sm.neckState === 'left') finalNeck = 'right';
+            else if (sm.neckState === 'right') finalNeck = 'left';
+          }
+
+          // 雙眼逆補償
+          const rad = -rawAngle * (Math.PI / 180);
+          const cos = Math.cos(rad);
+          const sin = Math.sin(rad);
+
+          const isClosedR = lm[159] && lm[145] && Math.abs(lm[145].y - lm[159].y) < 0.015;
+          const isClosedL = lm[386] && lm[374] && Math.abs(lm[374].y - lm[386].y) < 0.015;
+
+          let finalEye = 'center';
+          if (isClosedR || isClosedL) {
+            finalEye = 'close';
+            sm.eyes = 'close';
+          } else {
+            const eyeMidX = (eyeR.x + eyeL.x) / 2;
+            const eyeMidY = (eyeR.y + eyeL.y) / 2;
+            const eyeSpan = Math.abs(eyeL.x - eyeR.x) || 0.1;
+
+            let rawGaze = 0;
+            if (lm[1]) {
+              const relX = lm[1].x - eyeMidX;
+              const relY = lm[1].y - eyeMidY;
+              const localNoseX = relX * cos - relY * sin;
+              rawGaze += (localNoseX / eyeSpan) * 2.8;
+            }
+            if (lm[468] && lm[133]) {
+              const relIrisX = lm[468].x - eyeR.x;
+              const relIrisY = lm[468].y - eyeR.y;
+              const localIrisX = relIrisX * cos - relIrisY * sin;
+              const rWidth = Math.abs(lm[133].x - eyeR.x) || 0.04;
+              rawGaze += ((localIrisX / rWidth) - 0.5) * 2.2;
+            }
+
+            sm.gazeScore = sm.gazeScore * 0.70 + rawGaze * 0.30;
+
+            if (gameState === 'calibrating') {
+              calibSamplesRef.current.gazes.push(rawGaze);
+            }
+
+            const deltaGaze = sm.gazeScore - (baselineRef.current.gazeScore || 0);
+
+            let newEyeState = sm.eyes;
+            if (sm.eyes === 'center' || sm.eyes === 'close') {
+              if (deltaGaze > 0.18) newEyeState = 'left';
+              else if (deltaGaze < -0.18) newEyeState = 'right';
+              else newEyeState = 'center';
+            } else if (sm.eyes === 'left') {
+              if (deltaGaze < 0.08) newEyeState = 'center';
+            } else if (sm.eyes === 'right') {
+              if (deltaGaze > -0.08) newEyeState = 'center';
+            }
+            sm.eyes = newEyeState;
+
+            finalEye = sm.eyes;
+            if (invertLRRef.current && (finalEye === 'left' || finalEye === 'right')) {
+              finalEye = finalEye === 'left' ? 'right' : 'left';
+            }
+          }
+
+          setLivePosture(prev => ({
+            ...prev,
+            neckTilt: invertLRRef.current ? -Math.round(deltaAngle) : Math.round(deltaAngle),
+            neckState: finalNeck,
+            eyes: finalEye,
+            isFaceTracked: true,
+            eyeR: { x: 1 - eyeR.x, y: eyeR.y },
+            eyeL: { x: 1 - eyeL.x, y: eyeL.y }
+          }));
+        }
+      };
+
+      // 雙肩坐標解算 (靈敏門檻 >= 4px)
+      const onPoseResults = (results) => {
+        if (!results || !results.poseLandmarks) return;
+        const sL = results.poseLandmarks[11];
+        const sR = results.poseLandmarks[12];
+
+        if (sL && sR) {
+          const rawY = (sL.y + sR.y) / 2;
+          const sm = smoothedRef.current;
+          sm.shoulderY = sm.shoulderY * 0.5 + rawY * 0.5;
+
+          if (gameState === 'calibrating') {
+            calibSamplesRef.current.shoulders.push(rawY);
+          }
+
+          const baseShoulder = baselineRef.current.shoulderY || 0.75;
+          const elevPx = Math.round((baseShoulder - sm.shoulderY) * 500);
+
+          // 靈敏度優化：抬肩 >= 4px 即可觸發！沉肩 <= 2px 恢復
+          let newShState = sm.shoulderState;
+          if (sm.shoulderState === 'normal') {
+            if (elevPx >= 4) newShState = 'shrug';
+          } else if (sm.shoulderState === 'shrug') {
+            if (elevPx <= 2) newShState = 'normal';
+          }
+          sm.shoulderState = newShState;
+
+          setLivePosture(prev => ({
+            ...prev,
+            shoulderElevation: Math.max(0, elevPx),
+            shoulderState: sm.shoulderState,
+            shoulderL: { x: 1 - sL.x, y: sL.y },
+            shoulderR: { x: 1 - sR.x, y: sR.y }
+          }));
+        }
+      };
+
+      // 3 秒倒數姿勢校準
+      const beginCalibrationFlow = (targetState = 'playing') => {
+        audioSynth.init();
+        setNextTargetState(targetState);
+        setCalibCountdown(3);
+        calibSamplesRef.current = { angles: [], gazes: [], shoulders: [] };
+        setGameState('calibrating');
+        if (!cameraActive) startCamera();
+        speakCoachPrompt("請自然放鬆坐正，正在鎖定您的坐姿基準");
+      };
+
+      useEffect(() => {
+        if (gameState !== 'calibrating') return;
+
+        if (calibCountdown > 0) {
+          const timer = setTimeout(() => {
+            setCalibCountdown(c => c - 1);
+          }, 1000);
+          return () => clearTimeout(timer);
+        } else {
+          const samples = calibSamplesRef.current;
+          const avgA = samples.angles.length > 0 ? (samples.angles.reduce((a, b) => a + b, 0) / samples.angles.length) : 0;
+          const avgG = samples.gazes.length > 0 ? (samples.gazes.reduce((a, b) => a + b, 0) / samples.gazes.length) : 0;
+          const avgS = samples.shoulders.length > 0 ? (samples.shoulders.reduce((a, b) => a + b, 0) / samples.shoulders.length) : 0.75;
+
+          const newBaseline = {
+            neckAngle: avgA,
+            gazeScore: avgG,
+            shoulderY: avgS,
+            isCalibrated: true
+          };
+          setBaseline(newBaseline);
+          baselineRef.current = newBaseline;
+
+          audioSynth.playHitChime('SUPER');
+          speakCoachPrompt("基準鎖定完成！");
+
+          setTimeout(() => {
+            if (nextTargetState === 'drill7') {
+              startDrill7Actual();
+            } else {
+              startGameActual();
+            }
+          }, 800);
+        }
+      }, [gameState, calibCountdown]);
+
+      const startDrill7Actual = () => {
+        isDrillStepTransitioningRef.current = false;
+        setDrillIndex(0);
+        setDrillPassed([false, false, false, false, false, false, false]);
+        setGameState('drill7');
+      };
+
+      const startGameActual = () => {
+        const bpm = difficulty === 'easy' ? 60 : difficulty === 'medium' ? 75 : 88;
+        audioSynth.startSession(bpm);
+        setGameState('playing');
+        setIsPaused(false);
+        setScore(0);
+        setCombo(0);
+        setGameStats({ totalHits: 0, eyeHits: 0, neckHits: 0, shoulderHits: 0, misses: 0, supers: 0, perfects: 0, greats: 0 });
+
+        setMaxCombo(0);
+        setSessionTime(60);
+        totalPausedDurationRef.current = 0;
+        pausedAtRef.current = null;
+
+        const chart = CHARTS[difficulty] || CHARTS.medium;
+        notesRef.current = chart.map(n => ({ ...n, hit: false }));
+        hitEffectsRef.current = [];
+        gameStartTimeRef.current = performance.now();
+      };
+
+      // 60FPS AR 畫布渲染
+      useEffect(() => {
+        let animId;
+        const canvas = arCanvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        const travelTime = difficulty === 'easy' ? 3.5 : difficulty === 'medium' ? 2.6 : 2.0;
+        const hitRatio = 0.78;
+
+              const getRank = () => {
+        const totalChartNotes = (CHARTS[difficulty] || []).length || 1;
+        const hitRate = gameStats.totalHits / totalChartNotes;
+        if (hitRate >= 0.88) return { rank: 'S', color: 'text-amber-pastel', bg: 'bg-amber-pastel/20', border: 'border-amber-pastel/50', title: t.shareRankMaster };
+        if (hitRate >= 0.70) return { rank: 'A', color: 'text-matcha-light', bg: 'bg-matcha/20', border: 'border-matcha/50', title: t.shareRankFlex };
+        if (hitRate >= 0.50) return { rank: 'B', color: 'text-lake-soft', bg: 'bg-lake/20', border: 'border-lake/50', title: t.shareRankGood };
+        return { rank: 'C', color: 'text-sakura', bg: 'bg-sakura/20', border: 'border-sakura/50', title: t.shareRankPractice };
+      };
+
+      const handleShareResult = async () => {
+        const r = getRank();
+        const diffName = difficulty === 'hard' ? t.hard : difficulty === 'medium' ? t.medium : t.easy;
+        const shareUrl = 'https://43.161.228.192.sslip.io';
+        let shareText = '';
+        if (lang === 'en') {
+          shareText = `🎮 I achieved Rank 【${r.rank} - ${r.title}】 in DeskBeat 60s Office Rhythm Game!\n🎯 Score: ${score.toLocaleString()} | Max Combo: ${maxCombo}x | Mode: ${diffName}\n💆‍♂️ 60s neck, shoulder & eye relief right in browser (No install):\n${shareUrl}`;
+        } else {
+          shareText = `🎮 我在 DeskBeat 辦公室工學節奏遊戲獲得了 【${r.rank} 級・${r.title}】！\n🎯 最終得分：${score.toLocaleString()} | 最高連擊：${maxCombo}x | 難度：${diffName}\n💆‍♂️ 60秒深層活氧肩頸、告別久坐痠痛！開鏡頭免費直接玩：\n${shareUrl}`;
+        }
+
+        if (navigator.share) {
+          try {
+            await navigator.share({
+              title: 'DeskBeat 60s Office Rhythm Game',
+              text: shareText,
+              url: shareUrl
+            });
+            return;
+          } catch (err) {}
+        }
+
+        try {
+          await navigator.clipboard.writeText(shareText);
+          setShowToast(true);
+          setTimeout(() => setShowToast(false), 3200);
+        } catch (e) {
+          window.prompt(lang === 'en' ? 'Copy your result:' : '請複製您的成績文案：', shareText);
+        }
+      };
+
+      const handleDownloadCard = () => {
+        const cardCanvas = document.createElement('canvas');
+        cardCanvas.width = 1080;
+        cardCanvas.height = 1080;
+        const ctx = cardCanvas.getContext('2d');
+        const r = getRank();
+        const diffName = difficulty === 'hard' ? t.hard : difficulty === 'medium' ? t.medium : t.easy;
+
+        const bgGrad = ctx.createLinearGradient(0, 0, 1080, 1080);
+        bgGrad.addColorStop(0, '#1E232A');
+        bgGrad.addColorStop(0.5, '#2F3542');
+        bgGrad.addColorStop(1, '#15191E');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, 1080, 1080);
+
+        ctx.save();
+        const glowGrad = ctx.createRadialGradient(540, 420, 50, 540, 420, 450);
+        glowGrad.addColorStop(0, 'rgba(255, 165, 2, 0.25)');
+        glowGrad.addColorStop(0.6, 'rgba(106, 176, 76, 0.15)');
+        glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = glowGrad;
+        ctx.fillRect(0, 0, 1080, 1080);
+        ctx.restore();
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.roundRect(70, 70, 940, 940, 48);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 46px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('DeskBeat 60s', 540, 160);
+
+        ctx.fillStyle = '#6AB04C';
+        ctx.font = '700 24px sans-serif';
+        ctx.fillText(lang === 'en' ? 'OFFICE ERGONOMIC RHYTHM BREAK' : '辦公室人體工學舒壓節奏認證', 540, 205);
+
+        ctx.fillStyle = r.rank === 'S' ? '#FFA502' : r.rank === 'A' ? '#6AB04C' : '#70A1FF';
+        ctx.font = '900 160px sans-serif';
+        ctx.shadowColor = r.rank === 'S' ? '#FFA502' : '#6AB04C';
+        ctx.shadowBlur = 30;
+        ctx.fillText(r.rank, 540, 380);
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '700 32px sans-serif';
+        ctx.fillText(r.title, 540, 440);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.beginPath();
+        ctx.roundRect(140, 480, 800, 240, 24);
+        ctx.fill();
+
+        ctx.fillStyle = '#A4B0BE';
+        ctx.font = '600 22px sans-serif';
+        ctx.fillText(lang === 'en' ? 'FINAL SCORE' : '最終得分', 290, 530);
+        ctx.fillText(lang === 'en' ? 'MAX COMBO' : '最高連擊', 540, 530);
+        ctx.fillText(lang === 'en' ? 'DIFFICULTY' : '挑戰難度', 790, 530);
+
+        ctx.fillStyle = '#88D16B';
+        ctx.font = '900 52px monospace';
+        ctx.fillText(score.toLocaleString(), 290, 600);
+
+        ctx.fillStyle = '#FFA502';
+        ctx.font = '900 52px monospace';
+        ctx.fillText(`${maxCombo}x`, 540, 600);
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '700 32px sans-serif';
+        ctx.fillText(diffName, 790, 595);
+
+        ctx.fillStyle = '#E8F5E5';
+        ctx.font = '600 24px sans-serif';
+        const statsStr = lang === 'en'
+          ? `👁️ Eyes: ${gameStats.eyeHits}  |  🦒 Neck: ${gameStats.neckHits}  |  🧘 Shoulders: ${gameStats.shoulderHits}`
+          : `👁️ 眼周: ${gameStats.eyeHits}次  |  🦒 頸椎: ${gameStats.neckHits}次  |  🧘 肩胛: ${gameStats.shoulderHits}次`;
+        ctx.fillText(statsStr, 540, 680);
+
+        ctx.fillStyle = '#A4B0BE';
+        ctx.font = '600 24px sans-serif';
+        ctx.fillText(lang === 'en' ? 'Turn on camera & play in 60s' : '開啟鏡頭即刻挑戰・60秒深層告別久坐痠痛', 540, 830);
+
+        ctx.fillStyle = '#747D8C';
+        ctx.font = '500 22px sans-serif';
+        const nowStr = new Date().toLocaleDateString();
+        ctx.fillText(`${nowStr} • 43.161.228.192.sslip.io`, 540, 880);
+
+        const a = document.createElement('a');
+        a.download = `DeskBeat_ScoreCard_${r.rank}_${score}.png`;
+        a.href = cardCanvas.toDataURL('image/png');
+        a.click();
+      };
+
+      const renderARLoop = (now) => {
+
+          // 1. 動態同步畫布實體像素 (徹底消除束屏/豎屏長寬非等比擠壓失真)
+          const rect = canvas.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            const targetW = Math.round(rect.width);
+            const targetH = Math.round(rect.height);
+            if (canvas.width !== targetW || canvas.height !== targetH) {
+              canvas.width = targetW;
+              canvas.height = targetH;
+            }
+          }
+
+          const cw = canvas.width;
+          const ch = canvas.height;
+          ctx.clearRect(0, 0, cw, ch);
+
+          const curPosture = livePostureRef.current;
+          const guidesOn = showGuidesRef.current;
+
+          // 1. 動態雙眼軸線與雙肩線
+          if (guidesOn) {
+            ctx.save();
+            if (curPosture.isFaceTracked && curPosture.eyeR && curPosture.eyeL) {
+              const rX = curPosture.eyeR.x * cw;
+              const rY = curPosture.eyeR.y * ch;
+              const lX = curPosture.eyeL.x * cw;
+              const lY = curPosture.eyeL.y * ch;
+
+              const midX = (rX + lX) / 2;
+              const midY = (rY + lY) / 2;
+
+              const vX = lX - rX;
+              const vY = lY - rY;
+              const len = Math.hypot(vX, vY) || 1;
+              const ux = vX / len;
+              const uy = vY / len;
+
+              // 雙眼水平軸
+              ctx.strokeStyle = '#FFA502';
+              ctx.lineWidth = 3.5;
+              ctx.beginPath();
+              ctx.moveTo(midX - ux * 130, midY - uy * 130);
+              ctx.lineTo(midX + ux * 130, midY + uy * 130);
+              ctx.stroke();
+
+              // 垂直鼻樑法線軸
+              ctx.strokeStyle = 'rgba(255, 165, 2, 0.65)';
+              ctx.lineWidth = 2;
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.moveTo(midX - (-uy) * 55, midY - ux * 55);
+              ctx.lineTo(midX + (-uy) * 55, midY + ux * 55);
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+              // 雙眼準心
+              ctx.fillStyle = curPosture.eyes !== 'center' ? '#6AB04C' : '#FFA502';
+              ctx.beginPath();
+              ctx.arc(rX, rY, 7, 0, Math.PI * 2);
+              ctx.arc(lX, lY, 7, 0, Math.PI * 2);
+              ctx.fill();
+
+              // 傾角標籤
+              ctx.fillStyle = '#FFA502';
+              ctx.font = 'bold 13px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillText(`${curPosture.neckTilt}° ${curPosture.neckState !== 'center' ? (curPosture.neckState === 'left' ? '⤹ 左傾' : '右傾 ⤸') : '端正'}`, midX - (-uy) * 75, midY - ux * 75);
+            }
+
+            // 雙肩水平軸
+            if (curPosture.shoulderL && curPosture.shoulderR) {
+              const sLX = curPosture.shoulderL.x * cw;
+              const sLY = curPosture.shoulderL.y * ch;
+              const sRX = curPosture.shoulderR.x * cw;
+              const sRY = curPosture.shoulderR.y * ch;
+
+              const isShrug = curPosture.shoulderState === 'shrug' || (curPosture.shoulderElevation && curPosture.shoulderElevation >= 4);
+              ctx.strokeStyle = isShrug ? '#FF6B81' : 'rgba(106, 176, 76, 0.7)';
+              ctx.lineWidth = 3.5;
+              ctx.beginPath();
+              ctx.moveTo(sLX, sLY);
+              ctx.lineTo(sRX, sRY);
+              ctx.stroke();
+
+              ctx.fillStyle = isShrug ? '#FF6B81' : '#6AB04C';
+              ctx.beginPath();
+              ctx.arc(sLX, sLY, 9, 0, Math.PI * 2);
+              ctx.arc(sRX, sRY, 9, 0, Math.PI * 2);
+              ctx.fill();
+
+              if (isShrug) {
+                ctx.fillStyle = '#FF6B81';
+                ctx.font = 'bold 13px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`▲ 抬肩達成 (+${curPosture.shoulderElevation}px)`, (sLX + sRX) / 2, (sLY + sRY) / 2 - 14);
+              }
+            }
+
+            // 左右方向指示徽章
+            const leftActive = (curPosture.neckState === 'left' || curPosture.eyes === 'left');
+            const rightActive = (curPosture.neckState === 'right' || curPosture.eyes === 'right');
+
+            ctx.fillStyle = leftActive ? '#6AB04C' : 'rgba(30, 35, 42, 0.85)';
+            ctx.roundRect(14, 14, 86, 22, 6);
+            ctx.fill();
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("← 左側 L", 57, 25);
+
+            ctx.fillStyle = rightActive ? '#6AB04C' : 'rgba(30, 35, 42, 0.85)';
+            ctx.roundRect(cw - 100, 14, 86, 22, 6);
+            ctx.fill();
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText("右側 R →", cw - 57, 25);
+
+            ctx.restore();
+          }
+
+          // 2. 三軌下落軌道
+          const trackWidth = cw / 3;
+          const hitLineY = ch * hitRatio;
+
+          const trackThemes = [
+            { name: '眼睛', color: '#6AB04C', icon: '👁️', glow: 'rgba(106, 176, 76, 0.22)' },
+            { name: '頸椎', color: '#FFA502', icon: '📐', glow: 'rgba(255, 165, 2, 0.22)' },
+            { name: '肩膀', color: '#FF6B81', icon: '🏋️', glow: 'rgba(255, 107, 129, 0.22)' }
+          ];
+
+          trackThemes.forEach((t, i) => {
+            const tx = i * trackWidth;
+            ctx.fillStyle = t.glow;
+            ctx.fillRect(tx + 4, 0, trackWidth - 8, ch);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(tx + trackWidth, 0);
+            ctx.lineTo(tx + trackWidth, ch);
+            ctx.stroke();
+          });
+
+          // 水平判定線
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(0, hitLineY);
+          ctx.lineTo(cw, hitLineY);
+          ctx.stroke();
+
+          // 判定鎖定圓圈
+          // 判定鎖定圓圈 (在任何裝置上均為 100% 正圓，絕不拉伸為垂直長橢圓)
+          const hitRadius = Math.round(Math.min(26, trackWidth * 0.22));
+          trackThemes.forEach((t, i) => {
+            const cx = i * trackWidth + trackWidth / 2;
+            let isEngaged = false;
+            if (i === 0 && curPosture.eyes !== 'center') isEngaged = true;
+            if (i === 1 && curPosture.neckState !== 'center') isEngaged = true;
+            if (i === 2 && curPosture.shoulderState === 'shrug') isEngaged = true;
+
+            ctx.beginPath();
+            ctx.arc(cx, hitLineY, hitRadius, 0, Math.PI * 2);
+            ctx.fillStyle = isEngaged ? t.color : 'rgba(255, 255, 255, 0.25)';
+            ctx.fill();
+            ctx.strokeStyle = isEngaged ? '#FFFFFF' : t.color;
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${Math.round(hitRadius * 0.6)}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(t.icon, cx, hitLineY);
+          });
+
+          // 音符下落與判定
+          if (gameState === 'playing' && !isPausedRef.current) {
+            if (!gameStartTimeRef.current) gameStartTimeRef.current = now;
+            const elapsed = (now - gameStartTimeRef.current - totalPausedDurationRef.current) / 1000;
+            const timeLeft = Math.max(0, 60 - elapsed);
+            setSessionTime(Math.ceil(timeLeft));
+
+            if (timeLeft <= 0) {
+              finishGame();
+              return;
+            }
+
+            const speed = hitLineY / travelTime;
+
+            notesRef.current.forEach(note => {
+              if (note.hit) return;
+
+              const noteY = hitLineY - (note.time - elapsed) * speed;
+              const cx = note.track * trackWidth + trackWidth / 2;
+              const isAtHitLine = Math.abs(noteY - hitLineY) < 36;
+              const timeDiff = Math.abs(elapsed - note.time);
+
+              let isMatch = false;
+              if (note.posture === 'eye-left' && curPosture.eyes === 'left') isMatch = true;
+              if (note.posture === 'eye-right' && curPosture.eyes === 'right') isMatch = true;
+              if (note.posture === 'eye-close' && curPosture.eyes === 'close') isMatch = true;
+              if (note.posture === 'neck-left' && curPosture.neckState === 'left') isMatch = true;
+              if (note.posture === 'neck-right' && curPosture.neckState === 'right') isMatch = true;
+              if (note.posture === 'neck-center' && curPosture.neckState === 'center') isMatch = true;
+              if (note.posture === 'shoulder-shrug' && curPosture.shoulderState === 'shrug') isMatch = true;
+              if (note.posture === 'shoulder-drop' && curPosture.shoulderState === 'normal') isMatch = true;
+
+              if (isAtHitLine && isMatch && !note.hit) {
+                note.hit = true;
+                const isSuper = !!note.compoundGroup;
+                const rating = isSuper ? 'SUPER' : timeDiff <= 0.16 ? 'PERFECT' : 'GREAT';
+
+                // 各難度基底得分：難(3.2x) > 中(1.8x) > 低(1.0x)
+                const diffConfig = {
+                  easy: { mult: 1.0, superPts: 300, perfPts: 200, greatPts: 100, comboScale: 5 },
+                  medium: { mult: 1.8, superPts: 550, perfPts: 380, greatPts: 200, comboScale: 15 },
+                  hard: { mult: 3.2, superPts: 900, perfPts: 620, greatPts: 320, comboScale: 35 }
+                };
+                const cfg = diffConfig[difficulty] || diffConfig.medium;
+                const basePts = isSuper ? cfg.superPts : rating === 'PERFECT' ? cfg.perfPts : cfg.greatPts;
+                const comboBonus = Math.min(250, (combo + 1) * cfg.comboScale);
+                const pts = Math.round((basePts + comboBonus) * cfg.mult);
+
+                setScore(s => s + pts);
+                setCombo(c => {
+                  const n = c + 1;
+                  setMaxCombo(m => Math.max(m, n));
+                  return n;
+                });
+
+                setGameStats(prev => {
+                  const next = { ...prev, totalHits: prev.totalHits + 1 };
+                  if (note.track === 0) next.eyeHits++;
+                  else if (note.track === 1) next.neckHits++;
+                  else if (note.track === 2) next.shoulderHits++;
+                  if (rating === 'SUPER') next.supers++;
+                  else if (rating === 'PERFECT') next.perfects++;
+                  else if (rating === 'GREAT') next.greats++;
+                  return next;
+                });
+
+                const superMsg = lang === 'en' ? '✨ SUPER COMBO!' : '✨ 雙合拍 SUPER!';
+                const perfMsg = lang === 'en' ? '✨ PERFECT!' : '✨ PERFECT 完美!';
+                const greatMsg = lang === 'en' ? '🌿 GREAT!' : '🌿 GREAT 很好!';
+                triggerJudgment(isSuper ? superMsg : rating === 'PERFECT' ? perfMsg : greatMsg, rating, note.track);
+                audioSynth.playHitChime(rating);
+                spawnParticles(cx, hitLineY, trackThemes[note.track].color);
+              } else if (noteY > hitLineY + 45 && !note.hit) {
+                note.hit = true;
+                setCombo(0);
+                triggerJudgment(lang === 'en' ? '❌ MISS' : '❌ MISS 漏失', 'MISS', note.track);
+                setGameStats(prev => ({ ...prev, misses: prev.misses + 1 }));
+              }
+
+              if (noteY > -80 && noteY < ch + 60) {
+                const color = trackThemes[note.track].color;
+                // 自適應軌道寬度：在手機束屏下也能維持寬敞飽滿的膠囊寬度，告別窄扁壓迫感！
+                const nw = Math.round(Math.min(trackWidth - 10, 180));
+                const nh = Math.round(Math.max(34, Math.min(42, ch * 0.055)));
+                const nx = cx - nw / 2;
+                const ny = noteY - nh / 2;
+
+                ctx.save();
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 8;
+                ctx.fillStyle = '#FFFFFF';
+
+                if (note.track === 0) {
+                  ctx.beginPath();
+                  ctx.roundRect(nx, ny, nw, nh, 16);
+                  ctx.fill();
+                } else if (note.track === 1) {
+                  const shear = note.posture === 'neck-left' ? -8 : 8;
+                  ctx.beginPath();
+                  ctx.moveTo(nx + (shear > 0 ? shear : 0), ny);
+                  ctx.lineTo(nx + nw + (shear > 0 ? shear : 0), ny);
+                  ctx.lineTo(nx + nw + (shear < 0 ? shear : 0), ny + nh);
+                  ctx.lineTo(nx + (shear < 0 ? shear : 0), ny + nh);
+                  ctx.closePath();
+                  ctx.fill();
+                } else {
+                  ctx.beginPath();
+                  ctx.roundRect(nx, ny, nw, nh, [4, 4, 14, 14]);
+                  ctx.fill();
+                }
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // 提示詞字體大小：自適應膠囊寬度與雙語字元！
+                const displayLabel = getNoteLabel(note.label, lang);
+                const charCount = (displayLabel && displayLabel.length) || 1;
+                const fontPx = Math.round(Math.max(12, Math.min(15, (nw - 16) / (lang === 'en' ? charCount * 0.65 : charCount))));
+                ctx.fillStyle = '#1E232A';
+                ctx.font = `bold ${fontPx}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`${displayLabel}`, cx, noteY);
+                ctx.restore();
+              }
+            });
+          }
+
+          // 粒子動畫
+          hitEffectsRef.current.forEach((p, idx) => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= 0.035;
+            if (p.alpha <= 0) {
+              hitEffectsRef.current.splice(idx, 1);
+            } else {
+              ctx.save();
+              ctx.globalAlpha = p.alpha;
+              ctx.fillStyle = p.color;
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
+          });
+
+          animId = requestAnimationFrame(renderARLoop);
+        };
+
+        animId = requestAnimationFrame(renderARLoop);
+        return () => cancelAnimationFrame(animId);
+      }, [gameState, difficulty]);
+
+      const spawnParticles = (x, y, color) => {
+        for (let i = 0; i < 10; i++) {
+          hitEffectsRef.current.push({
+            x: x + (Math.random() * 20 - 10),
+            y: y + (Math.random() * 20 - 10),
+            vx: (Math.random() * 6 - 3),
+            vy: (Math.random() * -6 - 2),
+            size: Math.random() * 3.5 + 2,
+            color: color || '#FFA502',
+            alpha: 1.0
+          });
+        }
+      };
+
+      const triggerJudgment = (text, rating, track) => {
+        setJudgment({ text, rating, track, id: Date.now() + Math.random() });
+      };
+
+      // 7 動口令檢測
+      useEffect(() => {
+        if (gameState !== 'drill7') return;
+        const curStep = SEVEN_DRILL_STEPS[drillIndex];
+        if (curStep) speakCoachPrompt(curStep.voicePrompt);
+        isDrillStepTransitioningRef.current = false;
+      }, [gameState, drillIndex]);
+
+      useEffect(() => {
+        if (gameState !== 'drill7') return;
+        if (drillIndex >= SEVEN_DRILL_STEPS.length) return;
+        if (isDrillStepTransitioningRef.current) return;
+        if (drillPassed[drillIndex]) return;
+
+        const curStep = SEVEN_DRILL_STEPS[drillIndex];
+        if (!curStep) return;
+
+        if (curStep.checkFn(livePosture)) {
+          isDrillStepTransitioningRef.current = true;
+          audioSynth.playHitChime('PERFECT');
+
+          setDrillPassed(prev => {
+            const next = [...prev];
+            next[drillIndex] = true;
+            return next;
+          });
+          speakCoachPrompt("合格！");
+
+          setTimeout(() => {
+            setDrillIndex(cur => {
+              if (cur < SEVEN_DRILL_STEPS.length - 1) return cur + 1;
+              audioSynth.playVictoryFanfare();
+              if (window.confetti) window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+              speakCoachPrompt("恭喜！七大動作全部合格驗收！");
+              return cur;
+            });
+          }, 1100);
+        }
+      }, [gameState, drillIndex, livePosture.eyes, livePosture.neckState, livePosture.shoulderState, livePosture.shoulderElevation]);
+
+      const togglePause = () => {
+        if (isPaused) {
+          if (pausedAtRef.current) totalPausedDurationRef.current += (performance.now() - pausedAtRef.current);
+          audioSynth.resumeSession();
+          setIsPaused(false);
+        } else {
+          pausedAtRef.current = performance.now();
+          audioSynth.pauseSession();
+          setIsPaused(true);
+        }
+      };
+
+      const abortGame = () => {
+        audioSynth.stopSession();
+        setIsPaused(false);
+        setGameState('welcome');
+      };
+
+      const finishGame = () => {
+        audioSynth.stopSession();
+        audioSynth.playVictoryFanfare();
+        setGameState('victory');
+        if (window.confetti) {
+          window.confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 }, colors: ['#6AB04C', '#FFA502', '#FF6B81'] });
+        }
+      };
+
+      return (
+        <div className="w-full h-full flex items-center justify-center p-0 m-0 relative overflow-hidden bg-slate-dark">
+          {/* ============================================================== */}
+          {/* 16:9 黃金比例視訊舞台 (嚴格約束在可用高寬度內，徹底杜絕過度放大裁切！) */}
+          {/* ============================================================== */}
+          <div className="relative aspect-[16/9] w-full max-w-full max-h-full h-full flex items-center justify-center overflow-hidden bg-slate-dark shadow-2xl">
+            {/* 原生鏡像視訊：在 16:9 框內自然呈現，完美容納人臉與雙肩水平線 */}
+            <video
+              ref={videoRef}
+              className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
+              playsInline
+              muted
+              autoPlay
+            />
+
+            {/* 護眼低對比半透明遮罩 */}
+            <div className="absolute inset-0 bg-slate-dark/35 pointer-events-none" />
+
+            {/* AR 動態參考軸與節奏下落畫布 */}
+            <canvas
+              ref={arCanvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+            />
+
+            {/* 頂部 HUD (避開動態島與瀏海) */}
+            <div className="absolute top-2 left-3 right-3 safe-pad-x flex items-center justify-between text-xs z-20 pointer-events-none">
+              <div className="flex items-center space-x-2 pointer-events-auto">
+                <div className="px-3 py-1 rounded-full bg-slate-dark/85 backdrop-blur-md border border-white/15 text-white font-mono font-bold shadow-lg flex items-center space-x-2 text-[11px]">
+                  <span>00:{sessionTime < 10 ? `0${sessionTime}` : sessionTime}</span>
+                  <span className="text-white/30">•</span>
+                  <span className="text-amber-pastel flex items-center space-x-0.5">
+                    <Icon name="flame" className="w-3.5 h-3.5" />
+                    <span>{combo}x</span>
+                  </span>
+                  <span className="text-white/30">•</span>
+                  <span className="text-matcha-light">{score.toLocaleString()}</span>
+                </div>
+
+                <div className={`w-2.5 h-2.5 rounded-full ${livePosture.isFaceTracked ? 'bg-matcha' : 'bg-amber-pastel animate-pulse'}`}></div>
+              </div>
+
+              <div className="flex items-center space-x-1.5 pointer-events-auto">
+                <button
+                  onClick={toggleLang}
+                  className="px-2 py-1 rounded-full bg-slate-dark/85 hover:bg-slate-cozy backdrop-blur-md border border-white/20 text-white font-bold text-[10px] flex items-center space-x-1 shadow-lg transition"
+                  title="切換語言 / Switch Language"
+                >
+                  <Icon name="globe" className="w-3 h-3 text-matcha-light" />
+                  <span>{lang === 'zh' ? 'EN' : '中文'}</span>
+                </button>
+
+                <div className="bg-slate-dark/85 backdrop-blur-md rounded-full border border-white/15 p-0.5 flex space-x-0.5 shadow-lg">
+                  {['easy', 'medium', 'hard'].map(d => (
+                    <button
+                      key={d}
+                      onClick={() => setDifficulty(d)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition ${
+                        difficulty === d ? 'bg-matcha text-white' : 'text-white/60 hover:text-white'
+                      }`}
+                    >
+                      {d === 'easy' ? '低' : d === 'medium' ? '中' : '高⚡'}
+                    </button>
+                  ))}
+                </div>
+
+                {gameState === 'playing' && (
+                  <button
+                    onClick={togglePause}
+                    className="p-1.5 rounded-full bg-sand-card/25 backdrop-blur-md text-white font-bold hover:bg-sand-card/40 transition border border-white/20"
+                  >
+                    <Icon name={isPaused ? "play" : "pause"} className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                <button
+                  onClick={() => { const m = audioSynth.toggleMute(); setIsMuted(m); }}
+                  className="p-1.5 rounded-full bg-sand-card/25 backdrop-blur-md text-white hover:bg-sand-card/40 transition border border-white/20"
+                >
+                  <Icon name={isMuted ? "volume-x" : "volume-2"} className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* 醒目的立體發光打擊判定徽章 */}
+            {judgment && (
+              <div
+                key={judgment.id}
+                className="absolute pointer-events-none z-30 animate-judgment"
+                style={{
+                  left: `${(judgment.track + 0.5) * 33.33}%`,
+                  top: '68%',
+                }}
+              >
+                <div className={`px-4 py-1.5 rounded-2xl backdrop-blur-md border-2 shadow-2xl font-black text-sm sm:text-base tracking-wider flex items-center space-x-1.5 ${
+                  judgment.rating === 'SUPER'
+                    ? 'bg-amber-pastel/95 border-amber-glow text-slate-dark shadow-amber-pastel/60'
+                    : judgment.rating === 'PERFECT'
+                    ? 'bg-matcha/95 border-matcha-light text-white shadow-matcha/60'
+                    : judgment.rating === 'GREAT'
+                    ? 'bg-lake/95 border-lake-soft text-white shadow-lake/60'
+                    : 'bg-sakura/95 border-sakura-glow text-white shadow-sakura/60'
+                }`}>
+                  <span>{judgment.text}</span>
+                </div>
+              </div>
+            )}
+
+            {/* 底部控制膠囊 (桌機/橫屏維持單行、手機束屏優雅折為兩行，徹底杜絕文字垂直擠壓折行) */}
+            <div className="absolute bottom-2 left-2 right-2 safe-pad-x flex flex-col sm:flex-row items-center justify-between gap-1.5 text-xs z-20 pointer-events-none">
+              <div className="flex items-center space-x-1.5 pointer-events-auto order-2 sm:order-1">
+                <button
+                  onClick={toggleInvertLR}
+                  className={`px-2.5 py-1 rounded-full backdrop-blur-md border border-white/15 font-bold shadow-lg flex items-center space-x-1 text-[11px] whitespace-nowrap transition ${
+                    invertLR ? 'bg-amber-pastel text-white' : 'bg-slate-dark/85 text-white/80 hover:text-white'
+                  }`}
+                >
+                  <Icon name="repeat" className="w-3 h-3" />
+                  <span>{invertLR ? t.swappedLR : t.swapLR}</span>
+                </button>
+
+                <button
+                  onClick={() => beginCalibrationFlow(gameState === 'playing' ? 'playing' : 'drill7')}
+                  className="px-2.5 py-1 rounded-full bg-slate-dark/85 hover:bg-slate-cozy backdrop-blur-md border border-white/20 text-white font-bold shadow-lg flex items-center space-x-1 text-[11px] whitespace-nowrap transition"
+                >
+                  <Icon name="target" className="w-3 h-3 text-matcha" />
+                  <span>{t.calib3s}</span>
+                </button>
+              </div>
+
+              {/* 即時人體工學數值條 */}
+              <div className="bg-slate-dark/90 backdrop-blur-md rounded-full border border-white/15 px-3 py-1 flex items-center space-x-2 text-[10px] sm:text-[11px] font-mono text-white/90 shadow-lg pointer-events-auto order-1 sm:order-2 whitespace-nowrap">
+                <span>
+                  {t.eyes}: <strong className={livePosture.eyes !== 'center' ? 'text-matcha-light' : 'text-white'}>
+                    {livePosture.eyes === 'left' ? t.lookLeft : livePosture.eyes === 'right' ? t.lookRight : livePosture.eyes === 'close' ? t.closeEyes : t.center}
+                  </strong>
+                </span>
+                <span>•</span>
+                <span>
+                  {t.neck}: <strong className={livePosture.neckState !== 'center' ? 'text-amber-pastel' : 'text-white'}>
+                    {livePosture.neckTilt}°{livePosture.neckState !== 'center' ? (livePosture.neckState === 'left' ? t.tiltLeft : t.tiltRight) : ''}
+                  </strong>
+                </span>
+                <span>•</span>
+                <span>
+                  {t.shoulder}: <strong className={livePosture.shoulderState === 'shrug' ? 'text-sakura' : 'text-white'}>
+                    {livePosture.shoulderElevation}px{livePosture.shoulderState === 'shrug' ? t.shrug : ''}
+                  </strong>
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 pointer-events-auto order-3">
+                <button
+                  onClick={() => beginCalibrationFlow('drill7')}
+                  className="px-3 py-1 rounded-full bg-amber-pastel hover:bg-amber-glow text-white font-bold shadow-lg flex items-center space-x-1 text-[11px] whitespace-nowrap transition"
+                >
+                  <Icon name="mic" className="w-3 h-3" />
+                  <span>{t.drill7}</span>
+                </button>
+
+                {gameState === 'playing' && (
+                  <button
+                    onClick={abortGame}
+                    className="px-2.5 py-1 rounded-full bg-sakura hover:bg-sakura-glow text-white font-bold shadow-lg text-[11px] whitespace-nowrap transition"
+                  >
+                    {t.endGame}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ============================================================== */}
+            {/* 覆蓋層：首頁歡迎畫面（橫屏左右雙欄緊湊設計，100% 不超出邊界！） */}
+            {/* ============================================================== */}
+            {gameState === 'welcome' && (
+              <div className="absolute inset-0 bg-slate-dark/85 backdrop-blur-md z-30 flex items-center justify-center p-3 safe-pad-x text-white">
+                <div className="max-w-xl w-full bg-slate-dark/95 border border-white/20 rounded-3xl p-3 sm:p-4 shadow-2xl flex flex-col sm:flex-row items-center gap-3 sm:gap-5">
+                  {/* 左欄：品牌標題與說明 */}
+                  <div className="flex-1 flex flex-col items-center sm:items-start text-center sm:text-left">
+                    <div className="flex items-center space-x-2 mb-1 w-full justify-between sm:justify-start">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-7 h-7 rounded-xl bg-matcha flex items-center justify-center font-black text-sm shadow">拍</div>
+                        <h2 className="text-base sm:text-lg font-black tracking-tight">{t.title}</h2>
+                      </div>
+                      <button
+                        onClick={toggleLang}
+                        className="px-2.5 py-0.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white text-[10px] font-bold transition flex items-center space-x-1 shadow"
+                      >
+                        <Icon name="globe" className="w-3 h-3 text-matcha-light" />
+                        <span>{lang === 'zh' ? 'English' : '繁體中文'}</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-white/70 leading-relaxed mb-2">
+                      {t.subtitle}
+                    </p>
+                    <div className="flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-amber-pastel/15 border border-amber-pastel/30 text-amber-pastel text-[10px] font-bold">
+                      <span>{lang === 'en' ? '📱 Rotate phone or play vertical / Fullscreen' : '📱 支援手機直屏/橫屏全螢幕，開啟鏡頭即刻體驗'}</span>
+                    </div>
+                  </div>
+
+                  {/* 右欄：難度選擇 ＋ 開始按鈕（水平並排收斂高度） */}
+                  <div className="w-full sm:w-56 flex flex-col items-center gap-2">
+                    <div className="grid grid-cols-3 gap-1 w-full">
+                      {['easy', 'medium', 'hard'].map(d => (
+                        <button
+                          key={d}
+                          onClick={() => setDifficulty(d)}
+                          className={`py-1 rounded-lg text-[10px] font-bold transition border ${
+                            difficulty === d ? 'bg-matcha border-white/40 text-white shadow' : 'bg-white/10 border-white/10 text-white/70'
+                          }`}
+                        >
+                          {d === 'easy' ? t.easy : d === 'medium' ? t.medium : t.hard}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={() => beginCalibrationFlow('playing')}
+                      className="w-full py-2 rounded-xl bg-matcha hover:bg-matcha-dark text-white font-black text-xs shadow-xl transition flex items-center justify-center space-x-1.5 active:scale-95"
+                    >
+                      <Icon name="play" className="w-3.5 h-3.5" />
+                      <span>{t.startBtn}</span>
+                    </button>
+
+                    <button
+                      onClick={() => beginCalibrationFlow('drill7')}
+                      className="w-full py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white font-bold text-[10px] transition"
+                    >
+                      🎙️ {t.drill7}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 覆蓋層：3 秒倒數姿勢校準畫面 */}
+            {gameState === 'calibrating' && (
+              <div className="absolute inset-0 bg-slate-dark/80 backdrop-blur-sm z-30 flex flex-col items-center justify-center p-3 text-center text-white">
+                <div className="relative w-20 h-20 flex items-center justify-center mb-2">
+                  <div className="absolute inset-0 rounded-full border-4 border-matcha/40 animate-pulse-ring" />
+                  <div className="w-14 h-14 rounded-full bg-matcha flex items-center justify-center shadow-xl">
+                    <span className="text-2xl font-black font-mono text-white">{calibCountdown > 0 ? calibCountdown : '✓'}</span>
+                  </div>
+                </div>
+
+                <h3 className="text-base font-black mb-0.5">
+                  {calibCountdown > 0 ? '正在鎖定坐姿基準...' : '坐姿鎖定完成！'}
+                </h3>
+                <p className="text-[10px] text-white/80 max-w-xs leading-relaxed">
+                  請放鬆雙肩、端正頭部、自然正視鏡頭。<br />系統將以此高度與角度作為 0 度與 0px 基準！
+                </p>
+              </div>
+            )}
+
+            {/* 覆蓋層：7 動口令檢測 */}
+            {gameState === 'drill7' && (
+              <div className="absolute inset-0 bg-slate-dark/80 backdrop-blur-sm z-30 flex items-center justify-center p-3 text-center text-white safe-pad-x">
+                <div className="max-w-md w-full bg-slate-dark/95 p-3.5 rounded-2xl border border-amber-pastel/40 shadow-2xl flex flex-col gap-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-amber-pastel font-bold flex items-center space-x-1 text-[11px]">
+                      <Icon name="mic" className="w-3.5 h-3.5" />
+                      <span>動作檢測：{drillIndex + 1} / 7</span>
+                    </span>
+                    <button onClick={() => setGameState('welcome')} className="text-white/60 hover:text-white text-xs">離開</button>
+                  </div>
+
+                  <div className="flex gap-1">
+                    {SEVEN_DRILL_STEPS.map((s, idx) => (
+                      <div
+                        key={s.id}
+                        className={`h-1 flex-1 rounded-full transition-all ${
+                          drillPassed[idx] ? 'bg-matcha' : drillIndex === idx ? 'bg-amber-pastel animate-pulse' : 'bg-white/20'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="bg-white/10 rounded-xl p-2.5 text-left flex justify-between items-center">
+                    <div>
+                      <span className="text-[9px] text-amber-pastel uppercase font-bold">第 {drillIndex + 1} 動</span>
+                      <h3 className="text-xs sm:text-sm font-black mt-0.5">{SEVEN_DRILL_STEPS[drillIndex]?.title}</h3>
+                      <p className="text-[10px] text-white/70 mt-0.5">{SEVEN_DRILL_STEPS[drillIndex]?.targetDesc}</p>
+                    </div>
+
+                    <div className="text-right">
+                      {drillPassed[drillIndex] ? (
+                        <span className="text-xs font-black text-matcha-light flex items-center space-x-0.5">
+                          <Icon name="check" className="w-3.5 h-3.5 text-matcha" />
+                          <span>合格 PASS!</span>
+                        </span>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-pastel animate-pulse">檢測中...</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <button onClick={() => speakCoachPrompt(SEVEN_DRILL_STEPS[drillIndex]?.voicePrompt)} className="px-2.5 py-0.5 rounded-lg bg-white/15 text-[10px]">重聽口令</button>
+                    {drillIndex < 6 && (
+                      <button onClick={() => setDrillIndex(i => i + 1)} className="px-2.5 py-0.5 rounded-lg bg-white/15 text-[10px]">跳過此動</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 覆蓋層：暫停視窗 */}
+            {isPaused && (
+              <div className="absolute inset-0 bg-slate-dark/80 backdrop-blur-sm z-30 flex flex-col items-center justify-center p-4 text-center text-white">
+                <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center mb-1.5">
+                  <Icon name="pause" className="w-4 h-4 text-white" />
+                </div>
+                <h3 className="text-base font-black mb-1">伸展已暫停</h3>
+                <p className="text-[11px] text-white/70 mb-2.5">點擊下方按鈕即可繼續</p>
+                <div className="flex gap-2">
+                  <button onClick={togglePause} className="px-4 py-1.5 rounded-xl bg-matcha hover:bg-matcha-dark text-white font-bold text-xs shadow">繼續遊戲</button>
+                  <button onClick={abortGame} className="px-3 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-xs">結束回首頁</button>
+                </div>
+              </div>
+            )}
+
+            {/* 覆蓋層：精美結算成績卡與一鍵傳播分享 */}
+            {gameState === 'victory' && (() => {
+              const r = getRank();
+              const totalChartNotes = (CHARTS[difficulty] || []).length || 1;
+              const hitRate = Math.round(Math.min(100, (gameStats.totalHits / totalChartNotes) * 100));
+              const diffName = difficulty === 'hard' ? t.hard : difficulty === 'medium' ? t.medium : t.easy;
+
+              return (
+                <div className="absolute inset-0 bg-slate-dark/90 backdrop-blur-md z-30 flex items-center justify-center p-2.5 sm:p-4 text-center text-white safe-pad-x overflow-y-auto">
+                  <div className="max-w-md w-full bg-slate-dark/95 p-3.5 sm:p-5 rounded-3xl border border-white/20 shadow-2xl flex flex-col items-center relative my-auto">
+                    {/* 卡片頂部徽章 */}
+                    <div className="flex items-center space-x-1.5 mb-1">
+                      <span className="px-2.5 py-0.5 rounded-full bg-matcha text-white text-[10px] font-bold shadow-md">
+                        🏆 {t.victoryTag}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/80 text-[10px] font-medium border border-white/10">
+                        {diffName}
+                      </span>
+                    </div>
+
+                    <h2 className="text-base sm:text-lg font-black mt-0.5 mb-0.5 tracking-wide">{t.victoryTitle}</h2>
+                    <p className="text-[10px] sm:text-[11px] text-white/70 mb-2.5">{t.victorySub}</p>
+
+                    {/* 成績核心卡片 (視覺化認證) */}
+                    <div className={`w-full bg-gradient-to-br ${r.bg} rounded-2xl border ${r.border} p-3 mb-3 shadow-inner text-center relative overflow-hidden`}>
+                      <div className="flex items-center justify-around">
+                        {/* 評級 */}
+                        <div className="flex flex-col items-center">
+                          <span className="text-[10px] text-white/70 font-semibold">{t.overallRank}</span>
+                          <span className={`text-4xl sm:text-5xl font-black ${r.color} drop-shadow-md leading-none my-0.5`}>
+                            {r.rank}
+                          </span>
+                          <span className="text-[10px] font-bold text-white/90">{r.title}</span>
+                        </div>
+
+                        <div className="h-14 w-px bg-white/15" />
+
+                        {/* 得分與連擊 */}
+                        <div className="text-left flex flex-col justify-center space-y-0.5">
+                          <div>
+                            <span className="text-[9px] text-white/60 uppercase font-semibold">{t.finalScore}</span>
+                            <div className="text-xl sm:text-2xl font-black font-mono text-matcha-light leading-tight">
+                              {score.toLocaleString()}
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2 text-[10px] text-white/80 font-mono">
+                            <span>{t.maxCombo}: <strong className="text-amber-pastel">{maxCombo}x</strong></span>
+                            <span>•</span>
+                            <span>{t.accuracy}: <strong className="text-white">{hitRate}%</strong></span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 活氧部位統計 */}
+                      <div className="mt-2.5 pt-2 border-t border-white/10 grid grid-cols-3 gap-1 text-center text-[10px] text-white/80">
+                        <div className="bg-white/5 rounded-lg py-1 px-0.5">
+                          <span className="text-matcha-light font-bold">👁️ {t.statEyes}</span>
+                          <div className="font-mono text-[11px] text-white font-bold">{gameStats.eyeHits}</div>
+                        </div>
+                        <div className="bg-white/5 rounded-lg py-1 px-0.5">
+                          <span className="text-amber-pastel font-bold">🦒 {t.statNeck}</span>
+                          <div className="font-mono text-[11px] text-white font-bold">{gameStats.neckHits}</div>
+                        </div>
+                        <div className="bg-white/5 rounded-lg py-1 px-0.5">
+                          <span className="text-sakura font-bold">🧘 {t.statShoulders}</span>
+                          <div className="font-mono text-[11px] text-white font-bold">{gameStats.shoulderHits}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 社群裂變與操作按鈕 */}
+                    <div className="w-full flex flex-col gap-1.5">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleShareResult}
+                          className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-pastel to-amber-glow hover:brightness-110 text-slate-dark font-black text-xs shadow-lg flex items-center justify-center space-x-1 transition active:scale-95"
+                        >
+                          <span>{t.shareBtn}</span>
+                        </button>
+                        <button
+                          onClick={handleDownloadCard}
+                          className="py-2 px-3 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white font-bold text-xs shadow flex items-center justify-center space-x-1 transition active:scale-95 whitespace-nowrap"
+                        >
+                          <span>{t.saveCardBtn}</span>
+                        </button>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => beginCalibrationFlow('playing')}
+                          className="flex-1 py-1.5 rounded-xl bg-matcha hover:bg-matcha-dark text-white font-black text-xs shadow transition active:scale-95"
+                        >
+                          {t.retryBtn}
+                        </button>
+                        <button
+                          onClick={() => setGameState('welcome')}
+                          className="flex-1 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs transition active:scale-95"
+                        >
+                          {t.homeBtn}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 複製成功提示 Toast */}
+            {showToast && (
+              <div className="fixed top-5 left-1/2 transform -translate-x-1/2 bg-slate-dark/95 border border-matcha text-white px-4 py-2 rounded-2xl shadow-2xl text-xs font-bold z-50 animate-bounce flex items-center space-x-2">
+                <span>{t.copiedToast}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(
+      <ErrorBoundary>
+        <DeskBeatApp />
+      </ErrorBoundary>
+    );
+  </script>
+</body>
+</html>
